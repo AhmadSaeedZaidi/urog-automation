@@ -1,7 +1,8 @@
-import pandas as pd
 import os
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
 from dao import db
 
 
@@ -94,25 +95,91 @@ class ExcelLoader(BaseLoader):
 
 
 class GoogleSheetsLoader(BaseLoader):
+    """
+    Read data from a Google Spreadsheet and push it to the DAO inbox.
+
+    Authentication uses a **service-account** JSON key file pointed to by
+    ``credentials_file`` (or the ``GOOGLE_CREDENTIALS_FILE`` env-var).
+    """
+
+    SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+
     def __init__(self, credentials_file: Optional[str] = None):
-        self.credentials_file = credentials_file
+        self.credentials_file = (
+            credentials_file
+            or os.getenv("GOOGLE_CREDENTIALS_FILE")
+            or os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "..",
+                "..",
+                "..",
+                "..",
+                "google_credentials.json",
+            )
+        )
+        # Resolve to an absolute, canonical path
+        self.credentials_file = os.path.realpath(self.credentials_file)
+
+    # ------------------------------------------------------------------
+    # Internal helpers (each can be independently mocked in tests)
+    # ------------------------------------------------------------------
+
+    def _build_service(self):
+        """Authenticate and return a Sheets API v4 service object."""
+        from google.oauth2.service_account import Credentials
+        from googleapiclient.discovery import build
+
+        if not self.credentials_file or not os.path.isfile(self.credentials_file):
+            raise EnvironmentError(
+                f"Google credentials file not found: {self.credentials_file!r}. "
+                "Set GOOGLE_CREDENTIALS_FILE or place google_credentials.json "
+                "at the project root."
+            )
+
+        creds = Credentials.from_service_account_file(
+            self.credentials_file, scopes=self.SCOPES
+        )
+        return build("sheets", "v4", credentials=creds)
+
+    def _fetch_rows(self, service, spreadsheet_id: str, range_name: str = "Sheet1"):
+        """Fetch all rows from *range_name* and return as list-of-lists."""
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=spreadsheet_id, range=range_name)
+            .execute()
+        )
+        return result.get("values", [])
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def load(self, spreadsheet_id: str, source_name: Optional[str] = None) -> str:
         """
-        To be implemented with google-api-python-client.
-        Accepts a spreadsheet_id and assumes 'Sheet1' or iterates sheets.
+        Read *Sheet1* of the given Google Spreadsheet, convert to a
+        cleaned DataFrame, and push to the DAO inbox.
         """
         print(f"Connecting to Google Sheets ID: {spreadsheet_id}...")
 
-        # Placeholder for API Logic:
-        # 1. Auth with self.credentials_file
-        # 2. service.spreadsheets().values().get(...)
-        # 3. Convert List[List] to DataFrame
+        service = self._build_service()
+        rows = self._fetch_rows(service, spreadsheet_id)
 
-        # For now, we raise to indicate it needs the API library setup
-        raise NotImplementedError(
-            "Google Sheets API integration pending setup of credentials."
-        )
+        if not rows or len(rows) < 2:
+            print(f"Warning: No data rows found in sheet {spreadsheet_id}")
+            return None
+
+        # First row = headers, rest = data
+        headers = rows[0]
+        data = rows[1:]
+        df = pd.DataFrame(data, columns=headers)
+        df = self.clean_dataframe(df)
+        records = df.to_dict(orient="records")
+
+        if not source_name:
+            source_name = f"gsheet-{spreadsheet_id}"
+
+        return self._push_to_inbox(records, source_name, "gsheets")
 
 
 # ==========================================

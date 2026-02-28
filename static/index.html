@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UROG Automation — Admin Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* tiny scrollbar for the console */
+    #console::-webkit-scrollbar { width: 6px; }
+    #console::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen flex flex-col">
+
+  <!-- ── Header ─────────────────────────────────────────────── -->
+  <header class="bg-gray-900 border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+    <h1 class="text-xl font-bold tracking-tight">UROG Automation</h1>
+    <span id="health-badge" class="text-xs px-2 py-1 rounded-full bg-gray-700">checking…</span>
+  </header>
+
+  <!-- ── Main grid ──────────────────────────────────────────── -->
+  <main class="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 p-6">
+
+    <!-- ── Left column: actions ──────────────────────────────── -->
+    <section class="lg:col-span-2 space-y-6">
+
+      <!-- Upload File -->
+      <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+        <h2 class="font-semibold mb-3">Upload File</h2>
+        <div class="flex flex-wrap gap-3 items-end">
+          <input id="file-input" type="file" accept=".csv,.xlsx,.xls"
+                 class="block text-sm file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0
+                        file:bg-indigo-600 file:text-white file:cursor-pointer hover:file:bg-indigo-500" />
+          <button onclick="doUploadFile()" class="btn-primary">Upload</button>
+        </div>
+      </div>
+
+      <!-- Webhook Ingest -->
+      <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+        <h2 class="font-semibold mb-3">Webhook Ingest</h2>
+        <div class="space-y-2">
+          <input id="ingest-source" placeholder="source_name" class="input-field w-full" />
+          <textarea id="ingest-payload" rows="3" placeholder='{"key":"value"} or [{"key":"value"}]'
+                    class="input-field w-full font-mono text-xs"></textarea>
+          <button onclick="doWebhookIngest()" class="btn-primary">Send</button>
+        </div>
+      </div>
+
+      <!-- Trigger Worker -->
+      <div class="bg-gray-900 rounded-xl p-5 border border-gray-800 flex items-center justify-between">
+        <div>
+          <h2 class="font-semibold">Trigger Worker</h2>
+          <p class="text-xs text-gray-400">Move inbox rows → Silver-layer tables</p>
+        </div>
+        <button onclick="doTriggerWorker()" class="btn-primary">Run</button>
+      </div>
+
+      <!-- Generate Drafts -->
+      <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+        <h2 class="font-semibold mb-3">Generate Drafts</h2>
+        <div class="flex flex-wrap gap-3 items-end">
+          <input id="draft-template" placeholder="template_name" class="input-field" />
+          <input id="draft-role" placeholder="role (optional)" class="input-field" />
+          <input id="draft-limit" type="number" placeholder="limit" value="50" class="input-field w-20" />
+          <button onclick="doGenerateDrafts()" class="btn-primary">Generate</button>
+        </div>
+      </div>
+
+      <!-- Dispatch Drafts (uses last generated set) -->
+      <div class="bg-gray-900 rounded-xl p-5 border border-gray-800 flex items-center justify-between">
+        <div>
+          <h2 class="font-semibold">Dispatch Drafts</h2>
+          <p id="dispatch-count" class="text-xs text-gray-400">Generate drafts first</p>
+        </div>
+        <button id="dispatch-btn" onclick="doDispatch()" class="btn-primary" disabled>Send All</button>
+      </div>
+
+      <!-- Ingest Google Sheet -->
+      <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+        <h2 class="font-semibold mb-3">Ingest Google Sheet</h2>
+        <div class="flex flex-wrap gap-3 items-end">
+          <input id="gsheet-id" placeholder="spreadsheet_id" class="input-field flex-1" />
+          <button onclick="doIngestSheet()" class="btn-primary">Ingest</button>
+        </div>
+      </div>
+
+      <!-- Create Opportunity -->
+      <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+        <h2 class="font-semibold mb-3">Create Opportunity</h2>
+        <div class="space-y-2">
+          <input id="opp-title" placeholder="Title" class="input-field w-full" />
+          <input id="opp-email" placeholder="Professor email" class="input-field w-full" />
+          <input id="opp-desc" placeholder="Description (optional)" class="input-field w-full" />
+          <button onclick="doCreateOpportunity()" class="btn-primary">Create</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Right column: console ─────────────────────────────── -->
+    <aside class="lg:col-span-1 flex flex-col">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="font-semibold text-sm tracking-wide text-gray-400 uppercase">Console</h2>
+        <button onclick="clearConsole()" class="text-xs text-gray-500 hover:text-gray-300">clear</button>
+      </div>
+      <div id="console"
+           class="flex-1 bg-gray-900 border border-gray-800 rounded-xl p-4 font-mono text-xs
+                  overflow-y-auto max-h-[calc(100vh-10rem)] whitespace-pre-wrap leading-relaxed">
+        <span class="text-gray-500">Ready.\n</span>
+      </div>
+    </aside>
+
+  </main>
+
+  <!-- ── Shared Tailwind classes ─────────────────────────────── -->
+  <style>
+    .btn-primary {
+      @apply px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium
+             hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition;
+    }
+    .input-field {
+      @apply rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm
+             placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500;
+    }
+  </style>
+
+  <!-- ── JS ──────────────────────────────────────────────────── -->
+  <script type="module">
+    import { UrogAPI } from "./apiClient.js";
+
+    const api = new UrogAPI();          // defaults to http://127.0.0.1:8000
+    let lastDrafts = [];                // stash generated drafts for dispatch
+
+    // ── Console helpers ───────────────────────────────────────
+
+    const con = document.getElementById("console");
+
+    function log(msg, colour = "text-gray-300") {
+      const ts = new Date().toLocaleTimeString();
+      const line = document.createElement("div");
+      line.className = colour;
+      line.textContent = `[${ts}] ${msg}`;
+      con.appendChild(line);
+      con.scrollTop = con.scrollHeight;
+    }
+    function logOk(msg)   { log(`✓ ${msg}`, "text-emerald-400"); }
+    function logErr(msg)  { log(`✗ ${msg}`, "text-red-400"); }
+    function logInfo(msg) { log(`→ ${msg}`, "text-sky-400"); }
+
+    window.clearConsole = () => { con.innerHTML = ""; logInfo("Console cleared"); };
+
+    // ── Health check ──────────────────────────────────────────
+
+    async function checkHealth() {
+      const badge = document.getElementById("health-badge");
+      try {
+        const data = await api.checkHealth();
+        badge.textContent = data.status === "ok" ? "● healthy" : "● unknown";
+        badge.className = "text-xs px-2 py-1 rounded-full " +
+                          (data.status === "ok" ? "bg-emerald-900 text-emerald-300" : "bg-yellow-900 text-yellow-300");
+        logOk("Backend is reachable");
+      } catch (e) {
+        badge.textContent = "● offline";
+        badge.className = "text-xs px-2 py-1 rounded-full bg-red-900 text-red-300";
+        logErr(`Health check failed: ${e.message}`);
+      }
+    }
+    checkHealth();
+
+    // ── Upload File ───────────────────────────────────────────
+
+    window.doUploadFile = async () => {
+      const fileInput = document.getElementById("file-input");
+      const file = fileInput.files[0];
+      if (!file) return logErr("No file selected");
+      logInfo(`Uploading ${file.name}…`);
+      try {
+        const res = await api.uploadFile(file);
+        logOk(`Uploaded → inbox_id=${res.inbox_id} (${res.loader_type})`);
+      } catch (e) { logErr(e.message); }
+    };
+
+    // ── Webhook Ingest ────────────────────────────────────────
+
+    window.doWebhookIngest = async () => {
+      const source = document.getElementById("ingest-source").value.trim();
+      const raw    = document.getElementById("ingest-payload").value.trim();
+      if (!source || !raw) return logErr("Provide source_name and JSON payload");
+      let data;
+      try { data = JSON.parse(raw); } catch { return logErr("Invalid JSON"); }
+      logInfo(`Ingesting from "${source}"…`);
+      try {
+        const res = await api.webhookIngest(source, "webhook", data);
+        logOk(`Ingested → inbox_id=${res.inbox_id}`);
+      } catch (e) { logErr(e.message); }
+    };
+
+    // ── Trigger Worker ────────────────────────────────────────
+
+    window.doTriggerWorker = async () => {
+      logInfo("Triggering worker…");
+      try {
+        const res = await api.triggerWorker();
+        logOk(res.message);
+      } catch (e) { logErr(e.message); }
+    };
+
+    // ── Generate Drafts ───────────────────────────────────────
+
+    window.doGenerateDrafts = async () => {
+      const templateName = document.getElementById("draft-template").value.trim();
+      if (!templateName) return logErr("Provide a template name");
+      const role  = document.getElementById("draft-role").value.trim() || undefined;
+      const limit = parseInt(document.getElementById("draft-limit").value, 10) || 50;
+      logInfo(`Generating drafts for "${templateName}"…`);
+      try {
+        lastDrafts = await api.generateDrafts(templateName, { role, limit });
+        logOk(`${lastDrafts.length} draft(s) generated`);
+        document.getElementById("dispatch-count").textContent = `${lastDrafts.length} draft(s) ready`;
+        document.getElementById("dispatch-btn").disabled = lastDrafts.length === 0;
+      } catch (e) { logErr(e.message); }
+    };
+
+    // ── Dispatch Drafts ───────────────────────────────────────
+
+    window.doDispatch = async () => {
+      if (!lastDrafts.length) return logErr("No drafts to dispatch");
+      logInfo(`Dispatching ${lastDrafts.length} draft(s)…`);
+      try {
+        const results = await api.dispatchDrafts(lastDrafts);
+        const sent   = results.filter(r => r.status === "sent").length;
+        const failed = results.filter(r => r.status === "failed").length;
+        logOk(`Dispatched: ${sent} sent, ${failed} failed`);
+        results.filter(r => r.status === "failed").forEach(r =>
+          logErr(`  ${r.recipient_email}: ${r.error}`)
+        );
+        lastDrafts = [];
+        document.getElementById("dispatch-count").textContent = "Generate drafts first";
+        document.getElementById("dispatch-btn").disabled = true;
+      } catch (e) { logErr(e.message); }
+    };
+
+    // ── Ingest Google Sheet ───────────────────────────────────
+
+    window.doIngestSheet = async () => {
+      const id = document.getElementById("gsheet-id").value.trim();
+      if (!id) return logErr("Provide a spreadsheet ID");
+      logInfo(`Ingesting sheet ${id}…`);
+      try {
+        const res = await api.ingestGoogleSheet(id);
+        logOk(`Sheet ingested → inbox_id=${res.inbox_id}`);
+      } catch (e) { logErr(e.message); }
+    };
+
+    // ── Create Opportunity ────────────────────────────────────
+
+    window.doCreateOpportunity = async () => {
+      const title = document.getElementById("opp-title").value.trim();
+      const email = document.getElementById("opp-email").value.trim();
+      const desc  = document.getElementById("opp-desc").value.trim() || undefined;
+      if (!title || !email) return logErr("Title and professor email are required");
+      logInfo(`Creating opportunity "${title}"…`);
+      try {
+        const res = await api.createOpportunity(title, email, { description: desc });
+        logOk(`Opportunity ${res.opportunity_id} created`);
+        logOk(`Sheet: ${res.spreadsheet_url}`);
+      } catch (e) { logErr(e.message); }
+    };
+  </script>
+
+</body>
+</html>

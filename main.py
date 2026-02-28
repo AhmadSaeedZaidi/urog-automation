@@ -2,11 +2,14 @@
 FastAPI application for the UROG Data Ingestion & AI Communication Platform.
 
 Endpoints:
-    GET  /health                     — Health check
-    POST /api/webhook/ingest         — Receive JSON payloads into the data_inbox
-    POST /api/admin/trigger-worker   — Process inbox → normalized tables
-    POST /api/admin/generate-drafts  — Generate drafts for human review
-    POST /api/admin/dispatch         — Send approved drafts & log results
+    GET  /health                       — Health check
+    POST /api/webhook/ingest           — Receive JSON payloads into the data_inbox
+    POST /api/admin/trigger-worker     — Process inbox → normalized tables
+    POST /api/admin/generate-drafts    — Generate drafts for human review
+    POST /api/admin/dispatch           — Send approved drafts & log results
+    POST /api/admin/upload-file        — Upload a .csv / .xlsx file
+    POST /api/admin/ingest-gsheets     — Ingest rows from a Google Spreadsheet
+    POST /api/admin/create-opportunity — Create opportunity + linked Google Sheet
 
 Run with:
     uvicorn main:app --reload
@@ -14,12 +17,18 @@ Run with:
 
 from __future__ import annotations
 
+import os
+import tempfile
 from typing import Any, Dict, List, Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from dao import db
+from forms import WorkspaceMaker
+from ingest.loader import GoogleSheetsLoader, LoaderFactory
 from ingest.worker import process_inbox
 from generator.engine import ContentEngine
 from src.dispatch import send_via_resend, send_via_meta
@@ -33,6 +42,17 @@ app = FastAPI(
     version="1.0.0",
     description="Data Ingestion, AI Drafting, and Communication Dispatch",
 )
+
+# Allow the local frontend to reach the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Serve static frontend files (index.html, apiClient.js)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ---------------------------------------------------------------------------
 # Pydantic request / response models
@@ -83,6 +103,33 @@ class DispatchResult(BaseModel):
     platform: str
     status: str
     error: Optional[str] = None
+
+
+class OpportunityRequest(BaseModel):
+    title: str = Field(..., description="Opportunity title")
+    professor_email: str = Field(
+        ..., description="Email of the professor (must exist in the people table)"
+    )
+    description: Optional[str] = Field(None, description="Opportunity description")
+    type: str = Field("research", description="e.g. research, internship, event")
+    sheet_headers: List[str] = Field(
+        default_factory=lambda: ["Name", "Email", "Status"],
+        description="Column headers for the linked Google Sheet",
+    )
+
+
+class OpportunityResponse(BaseModel):
+    opportunity_id: str
+    title: str
+    spreadsheet_id: str
+    spreadsheet_url: str
+
+
+class IngestGSheetsRequest(BaseModel):
+    spreadsheet_id: str = Field(..., description="Google Spreadsheet ID to ingest")
+    source_name: Optional[str] = Field(
+        None, description="Human-readable label (defaults to gsheet-<id>)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -252,3 +299,163 @@ def dispatch_endpoint(req: DispatchRequest):
         )
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/upload-file
+# ---------------------------------------------------------------------------
+
+# Map MIME / extension to LoaderFactory keys
+_EXTENSION_MAP: Dict[str, str] = {
+    ".csv": "csv",
+    ".xlsx": "excel",
+    ".xls": "excel",
+}
+
+
+@app.post("/api/admin/upload-file", status_code=201)
+async def upload_file(file: UploadFile, source_name: Optional[str] = None):
+    """
+    Accept a physical ``.csv`` or ``.xlsx`` file upload, route it through
+    the ``LoaderFactory``, and push the data into the DAO inbox.
+
+    The temp file is cleaned up after processing.
+    """
+    # Determine file type from the filename extension
+    filename = file.filename or ""
+    _, ext = os.path.splitext(filename.lower())
+
+    loader_type = _EXTENSION_MAP.get(ext)
+    if not loader_type:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext}'. Accepted: .csv, .xlsx, .xls",
+        )
+
+    # Save to a temp file so the loader can read it from disk
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=ext)
+    try:
+        contents = await file.read()
+        with os.fdopen(tmp_fd, "wb") as tmp_file:
+            tmp_file.write(contents)
+
+        loader = LoaderFactory.get_loader(loader_type)
+        inbox_id = loader.load(tmp_path, source_name=source_name or filename)
+
+        return {
+            "status": "accepted",
+            "inbox_id": str(inbox_id),
+            "filename": filename,
+            "loader_type": loader_type,
+        }
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        # Clean up temp file
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/ingest-gsheets
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/admin/ingest-gsheets", status_code=201)
+def ingest_gsheets_endpoint(req: IngestGSheetsRequest):
+    """
+    Ingest data from a Google Spreadsheet (via the service-account bot)
+    and push the rows into the DAO inbox.
+    """
+    try:
+        loader = GoogleSheetsLoader()
+        inbox_id = loader.load(
+            req.spreadsheet_id,
+            source_name=req.source_name,
+        )
+        if inbox_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Spreadsheet is empty or has no data rows.",
+            )
+        return {
+            "status": "accepted",
+            "inbox_id": str(inbox_id),
+            "spreadsheet_id": req.spreadsheet_id,
+        }
+    except HTTPException:
+        raise
+    except EnvironmentError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/create-opportunity
+# ---------------------------------------------------------------------------
+
+
+@app.post(
+    "/api/admin/create-opportunity",
+    response_model=OpportunityResponse,
+    status_code=201,
+)
+def create_opportunity_endpoint(req: OpportunityRequest):
+    """
+    Create a new opportunity **and** a linked Google Sheet in one call.
+
+    1. Look up the professor in the ``people`` table by email.
+    2. ``WorkspaceMaker.create_opportunity_sheet()`` → creates the sheet
+       and shares it with the professor.
+    3. ``db.create_opportunity()`` → stores the sheet metadata in ``form_config``.
+    4. Returns the opportunity ID + Google Sheet URL.
+    """
+    # 1. Resolve professor → owner_id
+    professor = db.get_person_by_email(req.professor_email)
+    if not professor:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Professor not found: {req.professor_email}",
+        )
+    owner_id = str(professor["id"])
+
+    # 2. Create & share the Google Sheet
+    maker = WorkspaceMaker()
+    try:
+        sheet_info = maker.create_opportunity_sheet(
+            title=f"UROG — {req.title}",
+            professor_email=req.professor_email,
+            sheet_headers=req.sheet_headers,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to create Google Sheet: {exc}",
+        )
+
+    form_config = {
+        "spreadsheet_id": sheet_info["spreadsheet_id"],
+        "spreadsheet_url": sheet_info["url"],
+    }
+
+    # 3. Persist the opportunity
+    try:
+        opp_id = db.create_opportunity(
+            title=req.title,
+            owner_id=owner_id,
+            description=req.description,
+            type=req.type,
+            form_config=form_config,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"DB error: {exc}")
+
+    return OpportunityResponse(
+        opportunity_id=str(opp_id),
+        title=req.title,
+        spreadsheet_id=sheet_info["spreadsheet_id"],
+        spreadsheet_url=sheet_info["url"],
+    )

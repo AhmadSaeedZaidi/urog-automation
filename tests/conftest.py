@@ -16,3 +16,11 @@ def mock_env():
         # Remove API key so generator always uses mock
         os.environ.pop("GEMINI_API_KEY", None)
         yield
+
+
+@pytest.fixture(autouse=True)
+def mock_resend():
+    """Prevent real email sends during tests — mock Resend SDK globally."""
+    fake_response = {"id": "mock-resend-id-000"}
+    with patch("resend.Emails.send", return_value=fake_response) as mock_send:
+        yield mock_send

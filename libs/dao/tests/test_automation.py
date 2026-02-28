@@ -237,3 +237,56 @@ class TestMessageLogging(TestAutomationLayer):
 
         assert params[5] == long_error
         mock_conn.commit.assert_called_once()
+
+
+class TestGetPersonByEmail:
+    """Tests for the get_person_by_email helper."""
+
+    @pytest.fixture
+    def db(self):
+        db = UrogDB(connection_string="postgresql://test")
+        mock_conn = MagicMock()
+        mock_conn.closed = False
+        db.conn = mock_conn
+        return db
+
+    @pytest.fixture
+    def mock_connection(self, db):
+        mock_cursor = MagicMock()
+        db.conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        db.conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        return db.conn, mock_cursor
+
+    def test_returns_person_when_found(self, db, mock_connection):
+        _, mock_cursor = mock_connection
+        mock_cursor.fetchone.return_value = {
+            "id": "person-uuid-1",
+            "email": "alice@u.edu",
+            "full_name": "Alice",
+        }
+
+        result = db.get_person_by_email("alice@u.edu")
+
+        assert result["id"] == "person-uuid-1"
+        call_args = mock_cursor.execute.call_args
+        assert "WHERE email" in call_args[0][0]
+        assert call_args[0][1] == ("alice@u.edu",)
+
+    def test_returns_none_when_not_found(self, db, mock_connection):
+        _, mock_cursor = mock_connection
+        mock_cursor.fetchone.return_value = None
+
+        result = db.get_person_by_email("ghost@u.edu")
+        assert result is None
+
+    @patch("dao.client.psycopg2.connect")
+    def test_connects_if_needed(self, mock_connect, db):
+        db.conn = None
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None
+        mock_connect.return_value = mock_conn
+
+        db.get_person_by_email("test@u.edu")
+        mock_connect.assert_called_once()

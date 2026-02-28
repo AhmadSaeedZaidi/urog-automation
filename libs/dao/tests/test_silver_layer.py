@@ -2,7 +2,13 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
+from psycopg2.extras import Json
 from dao.client import UrogDB
+
+
+def _json_val(obj):
+    """Extract the adapted Python value from a psycopg2 Json wrapper."""
+    return obj.adapted if isinstance(obj, Json) else obj
 
 
 class TestSilverLayer:
@@ -161,12 +167,13 @@ class TestOpportunityOperations(TestSilverLayer):
         params = call_args[0][1]
 
         assert "INSERT INTO opportunities" in sql
-        assert params == (
+        assert params[:4] == (
             "AI Research Project",
             "prof-uuid-456",
             "Machine learning research opportunity",
             "research",
         )
+        assert _json_val(params[4]) == {}
         mock_conn.commit.assert_called_once()
 
     def test_create_opportunity_minimal_fields(self, db, mock_connection):
@@ -186,6 +193,7 @@ class TestOpportunityOperations(TestSilverLayer):
         assert params[1] == "prof-uuid-123"
         assert params[2] is None  # description
         assert params[3] == "research"  # default type
+        assert _json_val(params[4]) == {}  # default form_config
 
     def test_create_opportunity_internship_type(self, db, mock_connection):
         """Test creating an internship opportunity."""
@@ -200,6 +208,7 @@ class TestOpportunityOperations(TestSilverLayer):
         call_args = mock_cursor.execute.call_args
         params = call_args[0][1]
         assert params[3] == "internship"
+        assert _json_val(params[4]) == {}
 
     def test_create_opportunity_event_type(self, db, mock_connection):
         """Test creating an event opportunity."""
@@ -217,6 +226,7 @@ class TestOpportunityOperations(TestSilverLayer):
         call_args = mock_cursor.execute.call_args
         params = call_args[0][1]
         assert params[3] == "event"
+        assert _json_val(params[4]) == {}
 
     @patch("dao.client.psycopg2.connect")
     def test_create_opportunity_connects_if_needed(self, mock_connect, db):
@@ -231,3 +241,26 @@ class TestOpportunityOperations(TestSilverLayer):
         db.create_opportunity(title="Test Opp", owner_id="owner-1")
 
         mock_connect.assert_called_once()
+
+    def test_create_opportunity_with_form_config(self, db, mock_connection):
+        """Test creating an opportunity with explicit form_config."""
+        mock_conn, mock_cursor = mock_connection
+        mock_cursor.fetchone.return_value = {"id": "opp-with-sheet"}
+
+        form_cfg = {
+            "spreadsheet_id": "abc123",
+            "spreadsheet_url": "https://docs.google.com/spreadsheets/d/abc123",
+        }
+        result = db.create_opportunity(
+            title="Linked Project",
+            owner_id="prof-uuid",
+            description="Has a Google Sheet",
+            type="research",
+            form_config=form_cfg,
+        )
+
+        assert result == "opp-with-sheet"
+        call_args = mock_cursor.execute.call_args
+        params = call_args[0][1]
+        assert _json_val(params[4]) == form_cfg
+        mock_conn.commit.assert_called_once()

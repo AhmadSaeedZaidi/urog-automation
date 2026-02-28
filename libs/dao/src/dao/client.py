@@ -112,15 +112,20 @@ class UrogDB:
             self.conn.commit()
         return person_id
 
-    def create_opportunity(self, title, owner_id, description=None, type="research"):
+    def create_opportunity(
+        self, title, owner_id, description=None, type="research", form_config=None
+    ):
+        """Create a new opportunity, optionally storing Google Workspace metadata."""
         self.connect()
         sql = """
-            INSERT INTO opportunities (title, owner_id, description, type)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO opportunities (title, owner_id, description, type, form_config)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id;
         """
         with self.conn.cursor() as cur:
-            cur.execute(sql, (title, owner_id, description, type))
+            cur.execute(
+                sql, (title, owner_id, description, type, Json(form_config or {}))
+            )
             opp_id = cur.fetchone()["id"]
             self.conn.commit()
         return opp_id
@@ -128,6 +133,13 @@ class UrogDB:
     # ==========================
     # AUTOMATION Ops
     # ==========================
+
+    def get_person_by_email(self, email):
+        """Fetch a single person by email, or None if not found."""
+        self.connect()
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT * FROM people WHERE email = %s", (email,))
+            return cur.fetchone()
 
     def get_people(self, role=None, limit=100):
         """Fetch people, optionally filtered by role."""

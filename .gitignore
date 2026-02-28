@@ -49,3 +49,7 @@ Thumbs.db
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# google credentials
+google_credentials.json
+
