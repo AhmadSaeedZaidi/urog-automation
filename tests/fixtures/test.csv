@@ -1,0 +1,4 @@
+full_name,email,phone,role,major,year,team
+Alice Johnson,alice@example.com,+1111111111,student,Computer Science,3,Education
+Bob Smith,bob@example.com,+2222222222,student,Electrical Engineering,2,Research
+Carol Williams,carol@example.com,+3333333333,external,Physics,4,Outreach

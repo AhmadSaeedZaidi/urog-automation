@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 class UrogDB:
     def __init__(self, connection_string=None):
         self.conn_str = connection_string or os.getenv("DATABASE_URL")
@@ -26,11 +27,11 @@ class UrogDB:
         """Runs the schema.sql file to create tables."""
         if not schema_path:
             # default to local schema.sql
-            schema_path = os.path.join(os.path.dirname(__file__), 'schema.sql')
-        
+            schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
+
         self.connect()
         with self.conn.cursor() as cur:
-            with open(schema_path, 'r') as f:
+            with open(schema_path, "r") as f:
                 cur.execute(f.read())
             self.conn.commit()
         print("Schema initialized successfully.")
@@ -38,7 +39,7 @@ class UrogDB:
     # ==========================
     # BRONZE LAYER (Inbox) Ops
     # ==========================
-    
+
     def ingest_raw(self, source_name, source_type, payload):
         """
         Dumps raw data (dict or list) into the data_inbox.
@@ -51,7 +52,7 @@ class UrogDB:
         """
         with self.conn.cursor() as cur:
             cur.execute(sql, (source_name, source_type, Json(payload)))
-            new_id = cur.fetchone()['id']
+            new_id = cur.fetchone()["id"]
             self.conn.commit()
         return new_id
 
@@ -72,7 +73,7 @@ class UrogDB:
         """Mark an inbox item as done (or failed)."""
         self.connect()
         status_sql = "processed_at = NOW()" if not error else "processed_at = NULL"
-        
+
         sql = f"""
             UPDATE data_inbox 
             SET {status_sql}, error_log = %s 
@@ -86,7 +87,9 @@ class UrogDB:
     # SILVER LAYER (Core) Ops
     # ==========================
 
-    def upsert_person(self, email, full_name=None, role='student', phone=None, extra_data={}):
+    def upsert_person(
+        self, email, full_name=None, role="student", phone=None, extra_data={}
+    ):
         """
         Creates or Updates a person.
         - Merges extra_data into existing profile_data.
@@ -105,11 +108,11 @@ class UrogDB:
         """
         with self.conn.cursor() as cur:
             cur.execute(sql, (email, full_name, role, phone, Json(extra_data)))
-            person_id = cur.fetchone()['id']
+            person_id = cur.fetchone()["id"]
             self.conn.commit()
         return person_id
 
-    def create_opportunity(self, title, owner_id, description=None, type='research'):
+    def create_opportunity(self, title, owner_id, description=None, type="research"):
         self.connect()
         sql = """
             INSERT INTO opportunities (title, owner_id, description, type)
@@ -118,7 +121,7 @@ class UrogDB:
         """
         with self.conn.cursor() as cur:
             cur.execute(sql, (title, owner_id, description, type))
-            opp_id = cur.fetchone()['id']
+            opp_id = cur.fetchone()["id"]
             self.conn.commit()
         return opp_id
 
@@ -126,21 +129,71 @@ class UrogDB:
     # AUTOMATION Ops
     # ==========================
 
+    def get_people(self, role=None, limit=100):
+        """Fetch people, optionally filtered by role."""
+        self.connect()
+        if role:
+            sql = """
+                SELECT * FROM people
+                WHERE role = %s
+                ORDER BY created_at DESC
+                LIMIT %s;
+            """
+            params = (role, limit)
+        else:
+            sql = """
+                SELECT * FROM people
+                ORDER BY created_at DESC
+                LIMIT %s;
+            """
+            params = (limit,)
+        with self.conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
     def get_template(self, name):
         self.connect()
         with self.conn.cursor() as cur:
             cur.execute("SELECT * FROM templates WHERE name = %s", (name,))
             return cur.fetchone()
 
-    def log_sent_message(self, recipient_id, template_id, platform, compiled_msg, status='sent', error=None):
+    def create_template(self, name, platform, content, required_keys=None):
+        """Insert a new message template."""
+        self.connect()
+        sql = """
+            INSERT INTO templates (name, platform, content, required_keys)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (name) DO UPDATE SET
+                content = EXCLUDED.content,
+                required_keys = EXCLUDED.required_keys
+            RETURNING id;
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(sql, (name, platform, content, required_keys))
+            tmpl_id = cur.fetchone()["id"]
+            self.conn.commit()
+        return tmpl_id
+
+    def log_sent_message(
+        self,
+        recipient_id,
+        template_id,
+        platform,
+        compiled_msg,
+        status="sent",
+        error=None,
+    ):
         self.connect()
         sql = """
             INSERT INTO sent_logs (recipient_id, template_id, platform, status, compiled_message, error_message)
             VALUES (%s, %s, %s, %s, %s, %s);
         """
         with self.conn.cursor() as cur:
-            cur.execute(sql, (recipient_id, template_id, platform, status, compiled_msg, error))
+            cur.execute(
+                sql, (recipient_id, template_id, platform, status, compiled_msg, error)
+            )
             self.conn.commit()
+
 
 # Singleton instance for easy import
 db = UrogDB()
