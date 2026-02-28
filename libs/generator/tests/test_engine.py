@@ -18,18 +18,18 @@ class TestContentEngineInit:
         assert engine.mock_mode is True
 
     @patch.dict("os.environ", {"GEMINI_API_KEY": "fake-key-123"})
-    @patch("generator.engine.genai")
-    def test_real_mode_with_api_key(self, mock_genai):
+    @patch("generator.engine.genai.Client")
+    def test_real_mode_with_api_key(self, mock_client_cls):
         """Engine should NOT be in mock mode when an API key is set."""
         engine = ContentEngine()
         assert engine.mock_mode is False
-        mock_genai.configure.assert_called_once_with(api_key="fake-key-123")
+        mock_client_cls.assert_called_once_with(api_key="fake-key-123")
 
     @patch.dict("os.environ", {"GEMINI_API_KEY": "bad-key"})
-    @patch("generator.engine.genai")
-    def test_falls_back_to_mock_on_api_error(self, mock_genai):
-        """If genai.configure raises, engine should fallback to MOCK_MODE."""
-        mock_genai.configure.side_effect = Exception("Invalid API key")
+    @patch("generator.engine.genai.Client")
+    def test_falls_back_to_mock_on_api_error(self, mock_client_cls):
+        """If genai.Client raises, engine should fallback to MOCK_MODE."""
+        mock_client_cls.side_effect = Exception("Invalid API key")
         engine = ContentEngine()
         assert engine.mock_mode is True
 

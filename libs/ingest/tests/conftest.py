@@ -17,6 +17,13 @@ def mock_dao_db():
         yield mock_db
 
 
+@pytest.fixture(autouse=True)
+def mock_discord_webhook():
+    """Prevent real Discord webhook calls during tests."""
+    with patch("src.discord_logger.requests.post") as mock_post:
+        yield mock_post
+
+
 @pytest.fixture
 def sample_csv_records():
     """Sample records as they would appear after CSV parsing."""

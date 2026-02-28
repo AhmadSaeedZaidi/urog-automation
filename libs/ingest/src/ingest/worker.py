@@ -1,4 +1,5 @@
 from dao import db
+from src.discord_logger import send_audit_message
 
 
 def process_inbox():
@@ -91,3 +92,7 @@ def process_csv_payload(records):
         stats["updated"] += 1  # Upsert counts as update for simplicity
 
     print(f"Batch Result: {stats}")
+    send_audit_message(
+        "Ingest Batch Complete",
+        f"New: {stats['new']} | Updated: {stats['updated']} | Skipped: {stats['skipped']}",
+    )

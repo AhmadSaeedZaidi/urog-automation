@@ -32,6 +32,7 @@ from ingest.loader import GoogleSheetsLoader, LoaderFactory
 from ingest.worker import process_inbox
 from generator.engine import ContentEngine
 from src.dispatch import send_via_resend, send_via_meta
+from src.discord_logger import send_audit_message
 
 # ---------------------------------------------------------------------------
 # App
@@ -241,6 +242,9 @@ def generate_drafts_endpoint(req: DraftRequest):
                     status="draft",
                 )
             )
+        else:
+            # Add this so you can actually see the Gemini error!
+            print(f"FAILED for {person['email']}: {result.get('error')}")
 
     return drafts
 
@@ -297,6 +301,13 @@ def dispatch_endpoint(req: DispatchRequest):
                 error=error_msg,
             )
         )
+
+    sent = sum(1 for r in results if r.status == "sent")
+    failed = sum(1 for r in results if r.status == "failed")
+    send_audit_message(
+        "Dispatch Complete",
+        f"Sent: {sent} | Failed: {failed} | Total: {len(results)}",
+    )
 
     return results
 
@@ -452,6 +463,11 @@ def create_opportunity_endpoint(req: OpportunityRequest):
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"DB error: {exc}")
+
+    send_audit_message(
+        "Opportunity Created",
+        f"**{req.title}** for {req.professor_email}\nSheet: {sheet_info['url']}",
+    )
 
     return OpportunityResponse(
         opportunity_id=str(opp_id),

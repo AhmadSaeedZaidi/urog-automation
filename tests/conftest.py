@@ -24,3 +24,10 @@ def mock_resend():
     fake_response = {"id": "mock-resend-id-000"}
     with patch("resend.Emails.send", return_value=fake_response) as mock_send:
         yield mock_send
+
+
+@pytest.fixture(autouse=True)
+def mock_discord_webhook():
+    """Prevent real Discord webhook calls during tests."""
+    with patch("src.discord_logger.requests.post") as mock_post:
+        yield mock_post

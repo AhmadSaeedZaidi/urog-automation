@@ -1,4 +1,4 @@
-import google.generativeai as genai
+from google import genai
 import os
 import json
 import time
@@ -15,8 +15,7 @@ class ContentEngine:
             self.mock_mode = True
         else:
             try:
-                genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel("gemini-1.5-flash")
+                self.client = genai.Client(api_key=self.api_key)
             except Exception as e:
                 print(f"⚠️ API Error during config: {e}. Switching to MOCK_MODE.")
                 self.mock_mode = True
@@ -99,7 +98,10 @@ class ContentEngine:
             """
 
             # Attempt generation
-            response = self.model.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model="gemma-3-27b-it",
+                contents=prompt,
+            )
 
             # Check if response was blocked
             if not response.text:
